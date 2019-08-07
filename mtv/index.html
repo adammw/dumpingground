@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <title>video player</title>
+  <link href="https://vjs.zencdn.net/7.6.0/video-js.css" rel="stylesheet">
+  <link href="https://s3.amazonaws.com/s3bubble.videojs/cdn/videojs-s3bubble-meta-overlay.css" rel="stylesheet">
+  <style>
+    html, body { margin: 0; height: 100% }
+  </style>
+</head>
+<body>
+  <video id="video" class="video-js" style="height: 100%; width: 100%" controls=""></video>
+
+  <script src='https://vjs.zencdn.net/7.6.0/video.js'></script>
+  <script src="https://s3.amazonaws.com/s3bubble.videojs/cdn/videojs-s3bubble-meta-overlay.min.js"></script>
+  <script>
+    var player = videojs('video');
+
+    function uuidv4() {
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
+
+    function fetchToken() {
+      localStorage.uuid = localStorage.uuid || uuidv4()
+      if (localStorage.mediaToken) {
+        return Promise.resolve(localStorage.mediaToken)
+      }
+
+      return fetch(`https://xbox.mtvnservices.com/fpservice/html5/setupdevice?requestorId=VH1&uuid=${localStorage.uuid}`)
+        .then((r) => r.json())
+        .then((data) => {
+          console.log(data)
+          localStorage.mediaToken = data.token
+          return data.token
+        })
+    }
+
+    function changeChannel(mgid) {
+      player.pause()
+      return fetch(`http://media.mtvnservices.com/pmt/e1/access/index.html?uri=${mgid}&configtype=edge`, {
+        mode: 'cors',
+        headers: {
+          'Referer': 'http://www.mtv.com/'
+        }
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          var overlay = document.querySelector('#s3bubble-meta-overlay')
+          if (overlay) {
+            overlay.remove()
+          }
+
+          player.s3BubbleMetaOverlay({
+            title: data.feed.title
+          });
+
+          var mediaGenUrl = data.feed.items[0].group.content.replace(/device={device}/, '') + '&acceptMethods=hls&format=json'
+          return fetch(mediaGenUrl, {
+            headers: {
+              'X-VIA-TVE-MEDIATOKEN': localStorage.mediaToken,
+            },
+            mode: 'cors'
+          })
+        })
+        .then((r) => r.json())
+        .then((data) => {
+          console.log(data)
+          var url = data.package.video.item[0].rendition[0].src
+          console.log('url', url)
+          player.src(url)
+          player.play()
+          player.enterFullWindow()
+        })
+    }
+
+    var channels = [
+      'mgid:arc:live:vh1.com:3166f5d1-b3b3-41bb-a86b-816813b53ddb',
+      // 'mgid:arc:live:mtv.com:1db39ff2-4164-49be-bf44-517b401cb7fe',
+      'mgid:arc:live:comedycentral.com:e3e2f5a5-8680-4d6f-85c7-a7136f128b2a',
+      'mgid:arc:live:paramountnetwork.com:284878a5-9d93-4c8e-8976-824314b6bb8e',
+      'mgid:arc:live:logotv.com:b66f906c-1a86-4f25-86eb-ad2219679a40',
+      'mgid:arc:live:tvland.com:4a77a84a-bfb4-4457-898a-43eac161bdb7',
+      // 'mgid:arc:live:bet.com:fba9fd18-e7eb-49ac-8cac-341ae60718dc',
+      'mgid:arc:live:cmt.com:f158ce84-3e05-4f53-a110-a0e8dfd9493d'
+    ]
+
+    fetchToken().then(() => {
+      var initChannel = Number(localStorage.channel) || 0
+
+      changeChannel(channels[initChannel]).then(() => {
+        localStorage.channel = initChannel
+      })
+    })
+
+    document.addEventListener('keypress', (e) => {
+      switch(e.keyCode) {
+        case 33:
+          var channel = (Number(localStorage.channel) + 1) % channels.length;
+          changeChannel(channels[channel]).then(() => {
+            localStorage.channel = channel
+          })
+          break;
+        case 34:
+          var channel = (Number(localStorage.channel) - 1);
+          if (channel < 0) channel = channels.length - 1;
+          changeChannel(channels[channel]).then(() => {
+            localStorage.channel = channel
+          })
+          break;
+      }
+    })
+  </script>
+</body>
+</html>
