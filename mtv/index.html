@@ -42,7 +42,7 @@
 
     function changeChannel(mgid) {
       player.pause()
-      return fetch(`http://media.mtvnservices.com/pmt/e1/access/index.html?uri=${mgid}&configtype=edge`, {
+      return fetch(`https://media.mtvnservices.com/pmt/e1/access/index.html?uri=${mgid}&configtype=edge`, {
         mode: 'cors',
         headers: {
           'Referer': 'http://www.mtv.com/'
