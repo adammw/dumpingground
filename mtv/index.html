@@ -16,7 +16,8 @@
   <script src='https://vjs.zencdn.net/7.6.0/video.js'></script>
   <script src="https://s3.amazonaws.com/s3bubble.videojs/cdn/videojs-s3bubble-meta-overlay.min.js"></script>
   <script>
-    var player = videojs('video');
+    var player = videojs('video')
+    var offset = 3
 
     function uuidv4() {
       return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -25,68 +26,170 @@
       });
     }
 
-    function fetchToken() {
-      localStorage.uuid = localStorage.uuid || uuidv4()
-      if (localStorage.mediaToken) {
+    function fetchToken(forceRefreshToken) {
+      localStorage.uuid = forceRefreshToken ? uuidv4() : localStorage.uuid || uuidv4()
+
+      if (!forceRefreshToken && localStorage.mediaToken) {
         return Promise.resolve(localStorage.mediaToken)
       }
 
       return fetch(`https://xbox.mtvnservices.com/fpservice/html5/setupdevice?requestorId=VH1&uuid=${localStorage.uuid}`)
         .then((r) => r.json())
         .then((data) => {
-          console.log(data)
+          console.log('fpservice', data)
           localStorage.mediaToken = data.token
           return data.token
         })
     }
 
-    function changeChannel(mgid) {
+    function fetchMedia(feedItem) {
+      if (!feedItem.group || !feedItem.group.content) return Promise.reject();
+
+      var mediaGenUrl = feedItem.group.content.replace(/device={device}/, '') + '&acceptMethods=hls&format=json'
+
+      return fetch(mediaGenUrl, {
+        headers: {
+          'X-VIA-TVE-MEDIATOKEN': localStorage.mediaToken,
+        },
+        mode: 'cors'
+      }).then((r) => r.json())
+        .then((data) => {
+          if (data.package.video.item[0].code == "auth_failed_tve") {
+            console.warn("TVE Auth Error, refreshing token")
+            return fetchToken(true).then(() => {
+              return fetchMedia(feedItem)
+            });
+          }
+
+          return data.package.video.item[0];
+        })
+    }
+
+    function updateOverlay(data) {
+      var overlay = document.querySelector('#s3bubble-meta-overlay')
+      if (overlay) {
+        overlay.remove()
+      }
+
+      player.s3BubbleMetaOverlay(data);
+    }
+
+    function parseFeedDate(dateTime) {
+      return (dateTime.year) ?
+        new Date(dateTime.year, dateTime.month, dateTime.day, dateTime.hour, dateTime.minutes) :
+        new Date((dateTime + offset * 3600) * 1000);
+    }
+
+    function changeChannel(channel) {
       player.pause()
-      return fetch(`https://media.mtvnservices.com/pmt/e1/access/index.html?uri=${mgid}&configtype=edge`, {
+
+      updateOverlay({ title: "Loading..." })
+
+      var episodeData = channel.schedule ? fetch(channel.schedule)
+        .then((r) => r.json())
+        .then((data) => {
+          var idx = data.result.data.ptsInformation.findIndex((episode) => {
+            return parseFeedDate(episode.dateTime) > new Date();
+          })
+          console.log('episode schedule', idx)
+          if (idx > 1) {
+            var currentEpisode = data.result.data.ptsInformation[idx-1];
+            return currentEpisode
+          }
+          return {}
+        }) : Promise.resolve({})
+
+      var mediaFeed = fetch(`https://media.mtvnservices.com/pmt/e1/access/index.html?uri=${channel.mgid}&configtype=edge`, {
         mode: 'cors',
         headers: {
           'Referer': 'http://www.mtv.com/'
         }
-      })
-        .then((r) => r.json())
-        .then((data) => {
-          var overlay = document.querySelector('#s3bubble-meta-overlay')
-          if (overlay) {
-            overlay.remove()
+      }).then((r) => r.json())
+
+      return Promise.all([episodeData, mediaFeed])
+        .then((values) => {
+          console.log(values)
+          episode = values[0]
+          feedData = values[1]
+
+          if (!feedData || !feedData.feed || !feedData.feed.items || !feedData.feed.items[0]) {
+            return Promise.reject("No feed data");
           }
 
-          player.s3BubbleMetaOverlay({
-            title: data.feed.title
+          var startTime = parseFeedDate(episode.dateTime)
+          var startTimeStr = `${startTime.getHours()}:${startTime.getMinutes()}`
+
+          updateOverlay({
+            title: feedData.feed.title,
+            subTitle: `${episode.seriesName} - ${episode.episodeName}`,
+            para: `<p>${episode.parentalRating} - ${startTimeStr} - ${episode.programLength}</p><p>${episode.episodeDescription}</p>`
           });
 
-          var mediaGenUrl = data.feed.items[0].group.content.replace(/device={device}/, '') + '&acceptMethods=hls&format=json'
-          return fetch(mediaGenUrl, {
-            headers: {
-              'X-VIA-TVE-MEDIATOKEN': localStorage.mediaToken,
-            },
-            mode: 'cors'
-          })
-        })
-        .then((r) => r.json())
-        .then((data) => {
-          console.log(data)
-          var url = data.package.video.item[0].rendition[0].src
-          console.log('url', url)
-          player.src(url)
-          player.play()
-          player.enterFullWindow()
+          return fetchMedia(feedData.feed.items[0])
+            .then((videoItem) => {
+              var url = videoItem.rendition[0].src
+              console.log('url', url)
+
+              player.src(url)
+              player.play()
+            })
         })
     }
 
+    function channelUp() {
+      var channel = (Number(localStorage.channel) + 1) % channels.length;
+      // TODO: locking/aborting
+      return changeChannel(channels[channel]).then(() => {
+        localStorage.channel = channel
+      }, (e) => {
+        console.error('channel error', e);
+        localStorage.channel = channel
+        return channelUp()
+      })
+    }
+
+    function channelDown() {
+      var channel = (Number(localStorage.channel) - 1);
+      if (channel < 0) channel = channels.length - 1;
+      // TODO: locking/aborting
+      return changeChannel(channels[channel]).then(() => {
+        localStorage.channel = channel
+      }, (e) => {
+        console.error('channel error', e);
+        localStorage.channel = channel
+        return channelDown()
+      })
+    }
+
     var channels = [
-      'mgid:arc:live:vh1.com:3166f5d1-b3b3-41bb-a86b-816813b53ddb',
-      // 'mgid:arc:live:mtv.com:1db39ff2-4164-49be-bf44-517b401cb7fe',
-      'mgid:arc:live:comedycentral.com:e3e2f5a5-8680-4d6f-85c7-a7136f128b2a',
-      'mgid:arc:live:paramountnetwork.com:284878a5-9d93-4c8e-8976-824314b6bb8e',
-      'mgid:arc:live:logotv.com:b66f906c-1a86-4f25-86eb-ad2219679a40',
-      'mgid:arc:live:tvland.com:4a77a84a-bfb4-4457-898a-43eac161bdb7',
-      // 'mgid:arc:live:bet.com:fba9fd18-e7eb-49ac-8cac-341ae60718dc',
-      'mgid:arc:live:cmt.com:f158ce84-3e05-4f53-a110-a0e8dfd9493d'
+      {
+        mgid: 'mgid:arc:live:vh1.com:3166f5d1-b3b3-41bb-a86b-816813b53ddb',
+        schedule: 'https://www.vh1.com/feeds/ent_m068/28372c4c-950c-4060-be0b-b17773d6bd8c',
+      },
+      {
+        mgid: 'mgid:arc:live:mtv.com:1db39ff2-4164-49be-bf44-517b401cb7fe',
+      },
+      {
+        mgid: 'mgid:arc:live:comedycentral.com:e3e2f5a5-8680-4d6f-85c7-a7136f128b2a',
+        schedule: 'https://cors-anywhere.herokuapp.com/http://www.cc.com/feeds/ent_m068/450a90a8-1f4d-4d7d-a52a-a598c3a3623a/'
+      },
+      {
+        mgid: 'mgid:arc:live:paramountnetwork.com:284878a5-9d93-4c8e-8976-824314b6bb8e',
+      },
+      {
+        mgid: 'mgid:arc:live:logotv.com:b66f906c-1a86-4f25-86eb-ad2219679a40',
+        schedule: 'https://www.logotv.com/feeds/ent_m068/c698ba3d-1b2e-41d3-9c1f-1f0f6c066549'
+      },
+      {
+        mgid: 'mgid:arc:live:tvland.com:4a77a84a-bfb4-4457-898a-43eac161bdb7',
+      },
+      {
+        mgid: 'mgid:arc:live:bet.com:fba9fd18-e7eb-49ac-8cac-341ae60718dc',
+      },
+      {
+        mgid: 'mgid:arc:live:cmt.com:f158ce84-3e05-4f53-a110-a0e8dfd9493d',
+        schedule: 'https://www.cmt.com/feeds/ent_m068/a6f44461-46dc-4568-958c-67ca4d080bc0'
+      }
     ]
 
     fetchToken().then(() => {
@@ -94,23 +197,21 @@
 
       changeChannel(channels[initChannel]).then(() => {
         localStorage.channel = initChannel
+      }, (e) => {
+        console.error("Failed to change channel", channels[initChannel], e)
+        localStorage.channel = 0;
+        return changeChannel(channels[0])
       })
     })
 
     document.addEventListener('keypress', (e) => {
+      player.enterFullWindow()
       switch(e.keyCode) {
         case 33:
-          var channel = (Number(localStorage.channel) + 1) % channels.length;
-          changeChannel(channels[channel]).then(() => {
-            localStorage.channel = channel
-          })
+          channelUp();
           break;
         case 34:
-          var channel = (Number(localStorage.channel) - 1);
-          if (channel < 0) channel = channels.length - 1;
-          changeChannel(channels[channel]).then(() => {
-            localStorage.channel = channel
-          })
+          channelDown();
           break;
       }
     })
