@@ -75,12 +75,49 @@
     }
 
     function parseFeedDate(dateTime) {
+      if (!dateTime) return null;
       return (dateTime.year) ?
         new Date(dateTime.year, dateTime.month, dateTime.day, dateTime.hour, dateTime.minutes) :
         new Date((dateTime + offset * 3600) * 1000);
     }
 
+    function getFeedData(channel) {
+      if (channel.mediaGenDomain) {
+        return fetch(`https://${channel.mediaGenDomain}/feeds/mrss?uri=${channel.mgid}&configtype=edge`, {
+          mode: 'cors',
+          headers: {
+            'Referer': 'http://www.mtv.com/'
+          }
+        }).then((r) => r.text())
+          .then((xmlString) => {
+            var xml = (new DOMParser()).parseFromString(xmlString, "application/xml");
+            console.log(xml)
+            var title = xml.getElementsByTagName('title')[0].textContent
+            var item = xml.getElementsByTagName('item')[0]
+            var content = xml.getElementsByTagName('media:content')[0]
+
+            return {
+              title: title,
+              items: [{
+                group: {
+                  content: content.getAttribute('url')
+                }
+              }]
+            }
+          })
+      } else {
+        return fetch(`https://media.mtvnservices.com/pmt/e1/access/index.html?uri=${channel.mgid}&configtype=edge`, {
+          mode: 'cors',
+          headers: {
+            'Referer': 'http://www.mtv.com/'
+          }
+        }).then((r) => r.json())
+          .then((data) => { return data.feed })
+      }
+    }
+
     function changeChannel(channel) {
+      console.log('loading', channel)
       player.pause()
 
       updateOverlay({ title: "Loading..." })
@@ -99,33 +136,30 @@
           return {}
         }) : Promise.resolve({})
 
-      var mediaFeed = fetch(`https://media.mtvnservices.com/pmt/e1/access/index.html?uri=${channel.mgid}&configtype=edge`, {
-        mode: 'cors',
-        headers: {
-          'Referer': 'http://www.mtv.com/'
-        }
-      }).then((r) => r.json())
+      var mediaFeed = getFeedData(channel)
 
       return Promise.all([episodeData, mediaFeed])
         .then((values) => {
           console.log(values)
           episode = values[0]
-          feedData = values[1]
+          feed = values[1]
 
-          if (!feedData || !feedData.feed || !feedData.feed.items || !feedData.feed.items[0]) {
+          if (!feed || !feed.items || !feed.items[0]) {
             return Promise.reject("No feed data");
           }
 
           var startTime = parseFeedDate(episode.dateTime)
-          var startTimeStr = `${startTime.getHours()}:${startTime.getMinutes()}`
+          var startTimeStr = (startTime) ? `${startTime.getHours()}:${startTime.getMinutes()}` : ''
+
+          var hasEpisode = Object.keys({}).length > 0;
 
           updateOverlay({
-            title: feedData.feed.title,
-            subTitle: `${episode.seriesName} - ${episode.episodeName}`,
-            para: `<p>${episode.parentalRating} - ${startTimeStr} - ${episode.programLength}</p><p>${episode.episodeDescription}</p>`
+            title: feed.title,
+            subTitle: hasEpisode ? `${episode.seriesName} - ${episode.episodeName}` : 'Unknown Program',
+            para: hasEpisode ? `<p>${episode.parentalRating} - ${startTimeStr} - ${episode.programLength}</p><p>${episode.episodeDescription}</p>` : ''
           });
 
-          return fetchMedia(feedData.feed.items[0])
+          return fetchMedia(feed.items[0])
             .then((videoItem) => {
               var url = videoItem.rendition[0].src
               console.log('url', url)
@@ -168,6 +202,7 @@
       },
       {
         mgid: 'mgid:arc:live:mtv.com:1db39ff2-4164-49be-bf44-517b401cb7fe',
+        mediaGenDomain: 'www.mtv.com'
       },
       {
         mgid: 'mgid:arc:live:comedycentral.com:e3e2f5a5-8680-4d6f-85c7-a7136f128b2a',
