@@ -8,6 +8,7 @@
   <link href="https://s3.amazonaws.com/s3bubble.videojs/cdn/videojs-s3bubble-meta-overlay.css" rel="stylesheet">
   <style>
     html, body { margin: 0; height: 100% }
+    .vjs-control-bar { zoom: 2 }
   </style>
 </head>
 <body>
@@ -16,7 +17,15 @@
   <script src='https://vjs.zencdn.net/7.6.0/video.js'></script>
   <script src="https://s3.amazonaws.com/s3bubble.videojs/cdn/videojs-s3bubble-meta-overlay.min.js"></script>
   <script>
-    var player = videojs('video')
+    var player = videojs('video', {
+      html5: {
+        hls: {
+          useCueTags: true,
+          useBandwidthFromLocalStorage: true,
+          overrideNative: true // to enable captions
+        }
+      }
+    })
     var offset = 3
 
     function uuidv4() {
@@ -81,6 +90,17 @@
         new Date((dateTime + offset * 3600) * 1000);
     }
 
+    function handleCueChange() {
+      let activeCues = cuesTrack.activeCues;
+
+      for (let i = 0; i < activeCues.length; i++) {
+        let activeCue = activeCues[i];
+
+        console.log('Cue runs from ' + activeCue.startTime +
+                    ' to ' + activeCue.endTime);
+      }
+    }
+
     function getFeedData(channel) {
       if (channel.mediaGenDomain) {
         return fetch(`https://${channel.mediaGenDomain}/feeds/mrss?uri=${channel.mgid}&configtype=edge`, {
@@ -90,11 +110,10 @@
           }
         }).then((r) => r.text())
           .then((xmlString) => {
-            var xml = (new DOMParser()).parseFromString(xmlString, "application/xml");
-            console.log(xml)
+            var parser = new DOMParser();
+            var xml = parser.parseFromString(xmlString, "text/xml");
             var title = xml.getElementsByTagName('title')[0].textContent
-            var item = xml.getElementsByTagName('item')[0]
-            var content = xml.getElementsByTagName('media:content')[0]
+            var content = xml.getElementsByTagNameNS('http://search.yahoo.com/mrss/', 'content')[0]
 
             return {
               title: title,
@@ -166,6 +185,19 @@
 
               player.src(url)
               player.play()
+
+              let textTracks = player.textTracks();
+              let cuesTrack;
+
+              for (let i = 0; i < textTracks.length; i++) {
+                if (textTracks[i].label === 'ad-cues') {
+                  cuesTrack = textTracks[i];
+                }
+              }
+
+              if (cuesTrack) {
+                cuesTrack.addEventListener('cuechange', handleCueChange.bind(null, cuesTrack))
+              }
             })
         })
     }
