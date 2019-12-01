@@ -159,9 +159,9 @@
 
       return Promise.all([episodeData, mediaFeed])
         .then((values) => {
-          console.log(values)
           episode = values[0]
           feed = values[1]
+          console.log('episode', episode, 'feed', feed)
 
           if (!feed || !feed.items || !feed.items[0]) {
             return Promise.reject("No feed data");
@@ -170,7 +170,7 @@
           var startTime = parseFeedDate(episode.dateTime)
           var startTimeStr = (startTime) ? `${startTime.getHours()}:${startTime.getMinutes()}` : ''
 
-          var hasEpisode = Object.keys({}).length > 0;
+          var hasEpisode = Object.keys(episode).length > 0;
 
           updateOverlay({
             title: feed.title,
@@ -183,8 +183,12 @@
               var url = videoItem.rendition[0].src
               console.log('url', url)
 
-              player.src(url)
-              player.play()
+              try {
+                player.src(url)
+                player.play()
+              } catch(e) {
+                console.error('player error', e)
+              }
 
               let textTracks = player.textTracks();
               let cuesTrack;
@@ -234,7 +238,8 @@
       },
       {
         mgid: 'mgid:arc:live:mtv.com:1db39ff2-4164-49be-bf44-517b401cb7fe',
-        mediaGenDomain: 'www.mtv.com'
+        mediaGenDomain: 'www.mtv.com',
+        schedule: 'https://www.mtv.com/feeds/ent_m068/304aff0e-c6a5-4e45-8205-f21428feb0dd',
       },
       {
         mgid: 'mgid:arc:live:comedycentral.com:e3e2f5a5-8680-4d6f-85c7-a7136f128b2a',
@@ -274,10 +279,22 @@
     document.addEventListener('keypress', (e) => {
       player.enterFullWindow()
       switch(e.keyCode) {
-        case 33:
+        case 33: // remote up / ! key
           channelUp();
           break;
-        case 34:
+        case 34: // remote down / " key
+          channelDown();
+          break;
+      }
+    })
+
+    document.addEventListener('keydown', (e) => {
+      player.enterFullWindow()
+      switch(e.keyCode) {
+        case 38: // up arrow
+          channelUp();
+          break;
+        case 40: // down arrow
           channelDown();
           break;
       }
